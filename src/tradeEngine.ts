@@ -27,6 +27,10 @@ export class TradeEngine {
       }));
     });
 
+    this.ws.on('error', (error: Error) => {
+      // Error handler for WebSocket errors
+    });
+
     this.ws.on('message', (msg: string) => {
       const data: BybitWSMessage = JSON.parse(msg);
       if (data.topic?.startsWith('tickers') && data.data) {
@@ -34,7 +38,7 @@ export class TradeEngine {
       }
     });
 
-    this.ws.on('close', () => {
+    this.ws.on('close', (code: number, reason: Buffer) => {
       console.log('⚠️ WebSocket disconnected. Reconnecting...');
       setTimeout(() => this.connect(), 2000);
     });
