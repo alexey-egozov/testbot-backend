@@ -21,10 +21,10 @@ export class OrderManager {
     qty: number
   ) {
     const body = {
-      category: 'spot',
+      category: 'linear', //spot, linear, inverse, option
       symbol,
       side,
-      orderType: 'Market',
+      orderType: 'Market', //рыночная или лимитированая
       qty: qty.toString(),
       timeInForce: 'IOC'
     };

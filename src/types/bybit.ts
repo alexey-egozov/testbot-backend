@@ -9,9 +9,16 @@ export interface BybitTickerData {
   volume24h: string;
 }
 
+export interface BybitOrderBookData {
+  s?: string;
+  b?: [string, string][];
+  a?: [string, string][];
+  ts?: number;
+}
+
 export interface BybitWSMessage {
   topic?: string;
   type?: string;
   ts?: number;
-  data?: BybitTickerData;
+  data?: BybitTickerData | BybitOrderBookData | any;
 }
