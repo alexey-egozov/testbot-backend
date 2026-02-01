@@ -41,10 +41,120 @@ app.get('/api/price', (req: Request, res: Response) => {
   res.json({ price: tradeEngine.lastPrice });
 });
 
+app.get('/api/account/wallet-balance', async (req: Request, res: Response) => {
+  const accountType = typeof req.query.accountType === 'string' ? req.query.accountType : 'UNIFIED';
+  try {
+    const result = await orderManager.getWalletBalance(
+      accountType as 'UNIFIED' | 'CONTRACT' | 'SPOT'
+    );
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/positions', async (req: Request, res: Response) => {
+  const category = typeof req.query.category === 'string' ? req.query.category : 'linear';
+  const symbol = typeof req.query.symbol === 'string' ? req.query.symbol : undefined;
+  const settleCoin = typeof req.query.settleCoin === 'string' ? req.query.settleCoin : undefined;
+  try {
+    const result = await orderManager.getPositions(
+      category as 'linear' | 'inverse' | 'option',
+      symbol,
+      settleCoin
+    );
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/orders', async (req: Request, res: Response) => {
+  const category = typeof req.query.category === 'string' ? req.query.category : 'linear';
+  const symbol = typeof req.query.symbol === 'string' ? req.query.symbol : undefined;
+  try {
+    const result = await orderManager.getOrders(
+      category as 'linear' | 'inverse' | 'option',
+      symbol
+    );
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/executions', async (req: Request, res: Response) => {
+  const category = typeof req.query.category === 'string' ? req.query.category : 'linear';
+  const symbol = typeof req.query.symbol === 'string' ? req.query.symbol : undefined;
+  try {
+    const result = await orderManager.getExecutions(
+      category as 'linear' | 'inverse' | 'option',
+      symbol
+    );
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/instruments', async (req: Request, res: Response) => {
+  const category = typeof req.query.category === 'string' ? req.query.category : 'linear';
+  const symbol = typeof req.query.symbol === 'string' ? req.query.symbol : undefined;
+  try {
+    const result = await orderManager.getInstrumentsInfo(
+      category as 'linear' | 'inverse' | 'option' | 'spot',
+      symbol
+    );
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/tickers', async (req: Request, res: Response) => {
+  const category = typeof req.query.category === 'string' ? req.query.category : 'linear';
+  const symbol = typeof req.query.symbol === 'string' ? req.query.symbol : undefined;
+  try {
+    const result = await orderManager.getTickers(
+      category as 'linear' | 'inverse' | 'option' | 'spot',
+      symbol
+    );
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post('/api/order', async (req: Request, res: Response) => {
   const { side, value } = req.body;
   try {
     const result = await orderManager.createTestOrder('BTCUSDT', side, value);
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/trading-stop', async (req: Request, res: Response) => {
+  const {
+    symbol,
+    stopLoss,
+    takeProfit,
+    slTriggerBy,
+    tpTriggerBy,
+    positionIdx,
+    category
+  } = req.body;
+  try {
+    const result = await orderManager.setTradingStop({
+      category,
+      symbol,
+      stopLoss,
+      takeProfit,
+      slTriggerBy,
+      tpTriggerBy,
+      positionIdx
+    });
     res.json(result);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
