@@ -36,7 +36,7 @@ function getEnvVar(name: string, defaultValue?: string): string {
   return result;
 }
 
-export const BYBIT_WS_URL: string = getEnvVar('BYBIT_WS_URL', 'wss://stream-testnet.bybit.com/v5/public/spot');
+export const BYBIT_WS_URL: string = getEnvVar('BYBIT_WS_URL', 'wss://stream-testnet.bybit.com/v5/public/linear');
 export const BYBIT_REST_URL: string = getEnvVar('BYBIT_REST_URL', 'https://api-testnet.bybit.com');
 
 export const API_KEY: string = getEnvVar('API_KEY');
