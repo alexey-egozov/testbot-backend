@@ -92,12 +92,40 @@ app.get('/api/account/info', async (req: Request, res: Response) => {
   }
 });
 
+app.get('/api/orders/history', async (req: Request, res: Response) => {
+  const category = typeof req.query.category === 'string' ? req.query.category : 'linear';
+  const symbol = typeof req.query.symbol === 'string' ? req.query.symbol : undefined;
+  try {
+    const result = await orderManager.getOrderHistory(
+      category as 'linear' | 'inverse' | 'option',
+      symbol
+    );
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/positions/closed', async (req: Request, res: Response) => {
+  const category = typeof req.query.category === 'string' ? req.query.category : 'linear';
+  const symbol = typeof req.query.symbol === 'string' ? req.query.symbol : undefined;
+  try {
+    const result = await orderManager.getClosedPnl(
+      category as 'linear' | 'inverse',
+      symbol
+    );
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/api/strategy/status', (req: Request, res: Response) => {
   if (!strategy) {
     res.json({ enabled: false, paperTrading: false });
     return;
   }
-  res.json({ enabled: true, paperTrading: strategy.getPaperTrading() });
+  res.json({ enabled: true, running: strategy.isRunning(), paperTrading: strategy.getPaperTrading() });
 });
 
 app.post('/api/strategy/mode', (req: Request, res: Response) => {
@@ -111,7 +139,89 @@ app.post('/api/strategy/mode', (req: Request, res: Response) => {
     return;
   }
   strategy.setPaperTrading(paperTrading);
-  res.json({ enabled: true, paperTrading: strategy.getPaperTrading() });
+  res.json({ enabled: true, running: strategy.isRunning(), paperTrading: strategy.getPaperTrading() });
+});
+
+app.get('/api/strategy/paper-logs', (req: Request, res: Response) => {
+  if (!strategy) {
+    res.json({ logs: [] });
+    return;
+  }
+  res.json({ logs: strategy.getPaperLogs() });
+});
+
+app.get('/api/strategy/diagnostics', (req: Request, res: Response) => {
+  if (!strategy) {
+    res.json({ diagnostics: null });
+    return;
+  }
+  res.json({ diagnostics: strategy.getDiagnostics() });
+});
+
+app.get('/api/strategy/config', (req: Request, res: Response) => {
+  if (!strategy) {
+    res.status(400).json({ error: 'Strategy is disabled' });
+    return;
+  }
+  strategy.ensureConfigLoaded();
+  const payload = {
+    rsi: strategy.getRsiThresholds(),
+    filters: strategy.getFilterSettings()
+  };
+  res.json(payload);
+});
+
+app.post('/api/strategy/config', (req: Request, res: Response) => {
+  if (!strategy) {
+    res.status(400).json({ error: 'Strategy is disabled' });
+    return;
+  }
+  const { rsiOversold, rsiOverbought, minSpreadTicks, minBidDepth, minAskDepth } = req.body;
+  const oversold = Number(rsiOversold);
+  const overbought = Number(rsiOverbought);
+  const spreadTicks = Number(minSpreadTicks);
+  const bidDepth = Number(minBidDepth);
+  const askDepth = Number(minAskDepth);
+  if (!Number.isFinite(oversold) || !Number.isFinite(overbought)) {
+    res.status(400).json({ error: 'RSI values must be numbers' });
+    return;
+  }
+  if (oversold <= 0 || overbought >= 100 || oversold >= overbought) {
+    res.status(400).json({ error: 'RSI oversold must be < overbought and within 1-99' });
+    return;
+  }
+  if (!Number.isFinite(spreadTicks) || spreadTicks <= 0) {
+    res.status(400).json({ error: 'minSpreadTicks must be > 0' });
+    return;
+  }
+  if (!Number.isFinite(bidDepth) || bidDepth < 0) {
+    res.status(400).json({ error: 'minBidDepth must be >= 0' });
+    return;
+  }
+  if (!Number.isFinite(askDepth) || askDepth < 0) {
+    res.status(400).json({ error: 'minAskDepth must be >= 0' });
+    return;
+  }
+  strategy.setRsiThresholds(oversold, overbought);
+  strategy.setFilterSettings(spreadTicks, bidDepth, askDepth);
+  const payload = {
+    rsi: strategy.getRsiThresholds(),
+    filters: strategy.getFilterSettings()
+  };
+  res.json(payload);
+});
+
+app.post('/api/strategy/toggle', (req: Request, res: Response) => {
+  if (!strategy) {
+    res.status(400).json({ error: 'Strategy is disabled' });
+    return;
+  }
+  if (strategy.isRunning()) {
+    strategy.stop();
+  } else {
+    strategy.start();
+  }
+  res.json({ enabled: true, running: strategy.isRunning(), paperTrading: strategy.getPaperTrading() });
 });
 
 app.get('/api/positions', async (req: Request, res: Response) => {

@@ -2,6 +2,7 @@ import { TradeEngine } from './tradeEngine';
 import { OrderManager } from './orderManager';
 import { Candle, computeATR, computeRSI } from './indicators';
 import { PositionState } from './positionState';
+import { loadStrategyConfig, saveStrategyConfig } from './strategyConfigStore';
 
 type StrategyConfig = {
   symbol: string;
@@ -33,6 +34,20 @@ type InstrumentMeta = {
 
 type PositionSide = 'Buy' | 'Sell' | null;
 
+type StrategyDiagnostics = {
+  lastTickAt: number | null;
+  rsi: number | null;
+  atr: number | null;
+  signal: PositionSide;
+  spreadTicks: number | null;
+  bidDepth: number | null;
+  askDepth: number | null;
+  equity: number | null;
+  riskAmount: number | null;
+  qty: number | null;
+  blockedReasons: string[];
+};
+
 export class ScalpingStrategy {
   private timer: NodeJS.Timeout | null = null;
   private lastTradeAt = 0;
@@ -44,6 +59,8 @@ export class ScalpingStrategy {
   private openPositionSide: PositionSide = null;
   private instrumentMeta: InstrumentMeta | null = null;
   private lastSignal: PositionSide = null;
+  private lastSignalReset = true;
+  private configLoaded = false;
   private leverageSet = false;
   private positionState = new PositionState();
   private paperPosition: {
@@ -53,6 +70,20 @@ export class ScalpingStrategy {
     stopLoss: number;
     takeProfit: number;
   } | null = null;
+  private paperLogs: { timestamp: number; message: string }[] = [];
+  private diagnostics: StrategyDiagnostics = {
+    lastTickAt: null,
+    rsi: null,
+    atr: null,
+    signal: null,
+    spreadTicks: null,
+    bidDepth: null,
+    askDepth: null,
+    equity: null,
+    riskAmount: null,
+    qty: null,
+    blockedReasons: []
+  };
 
   constructor(
     private tradeEngine: TradeEngine,
@@ -82,6 +113,44 @@ export class ScalpingStrategy {
     return this.config.paperTrading;
   }
 
+  getPaperLogs() {
+    return this.paperLogs.slice(-50);
+  }
+
+  getRsiThresholds() {
+    this.ensureConfigLoaded();
+    return {
+      oversold: this.config.rsiOversold,
+      overbought: this.config.rsiOverbought
+    };
+  }
+
+  setRsiThresholds(oversold: number, overbought: number) {
+    this.config.rsiOversold = oversold;
+    this.config.rsiOverbought = overbought;
+    this.persistConfig();
+  }
+
+  getFilterSettings() {
+    this.ensureConfigLoaded();
+    return {
+      minSpreadTicks: this.config.minSpreadTicks,
+      minBidDepth: this.config.minBidDepth,
+      minAskDepth: this.config.minAskDepth
+    };
+  }
+
+  setFilterSettings(minSpreadTicks: number, minBidDepth: number, minAskDepth: number) {
+    this.config.minSpreadTicks = minSpreadTicks;
+    this.config.minBidDepth = minBidDepth;
+    this.config.minAskDepth = minAskDepth;
+    this.persistConfig();
+  }
+
+  getDiagnostics() {
+    return this.diagnostics;
+  }
+
   stop() {
     if (this.timer) {
       clearInterval(this.timer);
@@ -89,57 +158,101 @@ export class ScalpingStrategy {
     }
   }
 
+  isRunning() {
+    return Boolean(this.timer);
+  }
+
+  ensureConfigLoaded() {
+    if (!this.configLoaded) {
+      this.loadPersistedConfig();
+    }
+  }
+
   private async tick() {
+    if (!this.configLoaded) {
+      this.loadPersistedConfig();
+    }
     const now = Date.now();
+    this.diagnostics = {
+      ...this.diagnostics,
+      lastTickAt: now,
+      blockedReasons: []
+    };
     if (now - this.lastTradeAt < this.config.cooldownMs) {
+      this.diagnostics.blockedReasons.push('cooldown');
       return;
     }
     await this.ensureInstrumentMeta();
     if (!this.instrumentMeta) {
+      this.diagnostics.blockedReasons.push('no-instrument-meta');
       return;
     }
     await this.ensureLeverage();
     await this.reconcilePositions();
     await this.refreshDayEquity();
     this.lastEquity = await this.getEquity();
+    this.diagnostics.equity = this.lastEquity;
 
     if (!this.canTradeToday()) {
+      this.diagnostics.blockedReasons.push('daily-stop-hit');
       return;
     }
     if (this.tradesToday >= this.config.maxTradesPerDay) {
+      this.diagnostics.blockedReasons.push('max-trades-reached');
       return;
     }
 
     const candles = await this.getCandles();
     if (candles.length === 0) {
+      this.diagnostics.blockedReasons.push('no-candles');
       return;
     }
     const closes = candles.map(candle => candle.close);
     const rsi = computeRSI(closes, this.config.rsiPeriod);
     const atr = computeATR(candles, 14);
     if (rsi === null || atr === null) {
+      this.diagnostics.blockedReasons.push('insufficient-data');
       return;
     }
+    this.diagnostics.rsi = rsi;
+    this.diagnostics.atr = atr;
     this.checkPaperPosition(closes[closes.length - 1]);
 
-    if (!this.passesLiquidityFilters()) {
+    const liquidityOk = this.passesLiquidityFilters();
+    if (!liquidityOk) {
+      this.diagnostics.blockedReasons.push('liquidity-filter');
       return;
     }
 
     const signal = this.getSignal(rsi);
-    if (!signal || signal === this.lastSignal) {
+    this.diagnostics.signal = signal;
+    if (this.lastSignal === 'Buy' && rsi >= this.getRsiResetBuy()) {
+      this.lastSignalReset = true;
+    }
+    if (this.lastSignal === 'Sell' && rsi <= this.getRsiResetSell()) {
+      this.lastSignalReset = true;
+    }
+    if (!signal) {
+      this.diagnostics.blockedReasons.push('no-signal');
+      return;
+    }
+    if (signal === this.lastSignal && !this.lastSignalReset) {
+      this.diagnostics.blockedReasons.push('rsi-reset-required');
       return;
     }
 
     if (this.openPositionSide || this.paperPosition) {
+      this.diagnostics.blockedReasons.push('position-open');
       return;
     }
     if (this.openOrderLinkId) {
+      this.diagnostics.blockedReasons.push('order-pending');
       return;
     }
 
     await this.executeSignal(signal, atr, closes[closes.length - 1]);
     this.lastSignal = signal;
+    this.lastSignalReset = false;
   }
 
   private getSignal(rsi: number): PositionSide {
@@ -152,19 +265,60 @@ export class ScalpingStrategy {
     return null;
   }
 
+  private loadPersistedConfig() {
+    const saved = loadStrategyConfig();
+    if (saved) {
+      this.config.rsiOversold = saved.rsiOversold;
+      this.config.rsiOverbought = saved.rsiOverbought;
+      this.config.minSpreadTicks = saved.minSpreadTicks;
+      this.config.minBidDepth = saved.minBidDepth;
+      this.config.minAskDepth = saved.minAskDepth;
+    }
+    this.configLoaded = true;
+  }
+
+  private persistConfig() {
+    const snapshot = {
+      rsiOversold: this.config.rsiOversold,
+      rsiOverbought: this.config.rsiOverbought,
+      minSpreadTicks: this.config.minSpreadTicks,
+      minBidDepth: this.config.minBidDepth,
+      minAskDepth: this.config.minAskDepth
+    };
+    saveStrategyConfig(snapshot);
+  }
+
+  private getRsiResetBuy() {
+    return Math.min(this.config.rsiOversold + 10, 50);
+  }
+
+  private getRsiResetSell() {
+    return Math.max(this.config.rsiOverbought - 10, 50);
+  }
+
   private passesLiquidityFilters(): boolean {
     const orderBook = this.tradeEngine.orderBook;
     if (!orderBook) {
+      this.diagnostics.blockedReasons.push('no-orderbook');
       return false;
     }
     if (!this.instrumentMeta) {
       return false;
     }
     if (!orderBook.bestAsk || !orderBook.bestBid) {
+      this.diagnostics.blockedReasons.push('no-best-bid-ask');
       return false;
     }
     const spread = orderBook.bestAsk - orderBook.bestBid;
     const spreadTicks = spread / this.instrumentMeta.tickSize;
+    this.diagnostics.spreadTicks = spreadTicks;
+    this.diagnostics.bidDepth = orderBook.bidDepth;
+    this.diagnostics.askDepth = orderBook.askDepth;
+    // Negative/zero spread = crossed/invalid book; do not treat as "tight" liquidity.
+    if (orderBook.bestAsk <= orderBook.bestBid || spreadTicks < 0) {
+      this.diagnostics.blockedReasons.push('invalid-spread');
+      return false;
+    }
     if (spreadTicks > this.config.minSpreadTicks) {
       return false;
     }
@@ -184,6 +338,7 @@ export class ScalpingStrategy {
 
     const equity = this.lastEquity ?? (await this.getEquity());
     if (!equity) {
+      this.diagnostics.blockedReasons.push('no-equity');
       return;
     }
 
@@ -191,7 +346,10 @@ export class ScalpingStrategy {
     const riskAmount = equity * this.config.riskPerTradePct;
     let qty = riskAmount / stopDistance;
     qty = this.roundQty(qty);
+    this.diagnostics.riskAmount = riskAmount;
+    this.diagnostics.qty = qty;
     if (qty < this.instrumentMeta.minOrderQty) {
+      this.diagnostics.blockedReasons.push('qty-below-min');
       return;
     }
     if (qty > this.instrumentMeta.maxOrderQty) {
@@ -214,6 +372,10 @@ export class ScalpingStrategy {
         stopLoss: this.roundPrice(stopLoss),
         takeProfit: this.roundPrice(takeProfit)
       };
+      this.paperLogs.push({
+        timestamp: Date.now(),
+        message: `Open ${side} @ ${entryPrice.toFixed(2)} qty ${qty.toFixed(4)}`
+      });
       this.lastTradeAt = Date.now();
       this.tradesToday += 1;
       this.openOrderLinkId = null;
@@ -291,10 +453,20 @@ export class ScalpingStrategy {
     const { side, stopLoss, takeProfit } = this.paperPosition;
     if (side === 'Buy') {
       if (lastPrice <= stopLoss || lastPrice >= takeProfit) {
+        const exitPrice = lastPrice;
+        this.paperLogs.push({
+          timestamp: Date.now(),
+          message: `Close Buy @ ${exitPrice.toFixed(2)} (SL/TP hit)`
+        });
         this.paperPosition = null;
       }
     } else if (side === 'Sell') {
       if (lastPrice >= stopLoss || lastPrice <= takeProfit) {
+        const exitPrice = lastPrice;
+        this.paperLogs.push({
+          timestamp: Date.now(),
+          message: `Close Sell @ ${exitPrice.toFixed(2)} (SL/TP hit)`
+        });
         this.paperPosition = null;
       }
     }

@@ -1,0 +1,7 @@
+{
+  "rsiOversold": 40,
+  "rsiOverbought": 60,
+  "minSpreadTicks": 10,
+  "minBidDepth": 0.5,
+  "minAskDepth": 0.5
+}

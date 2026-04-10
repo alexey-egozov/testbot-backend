@@ -162,6 +162,10 @@ export class OrderManager {
     return this.signedGet('/v5/order/realtime', { category, symbol });
   }
 
+  async getOrderHistory(category: 'linear' | 'inverse' | 'option' = 'linear', symbol?: string) {
+    return this.signedGet('/v5/order/history', { category, symbol, limit: 20 });
+  }
+
   async cancelOrder(params: {
     category?: 'linear' | 'inverse' | 'option';
     symbol: string;
@@ -179,6 +183,10 @@ export class OrderManager {
 
   async getExecutions(category: 'linear' | 'inverse' | 'option' = 'linear', symbol?: string) {
     return this.signedGet('/v5/execution/list', { category, symbol });
+  }
+
+  async getClosedPnl(category: 'linear' | 'inverse' = 'linear', symbol?: string) {
+    return this.signedGet('/v5/position/closed-pnl', { category, symbol, limit: 20 });
   }
 
   async setTradingStop(params: {

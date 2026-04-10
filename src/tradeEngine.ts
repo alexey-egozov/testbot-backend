@@ -77,6 +77,8 @@ export class TradeEngine {
             asks.push([price, size]);
           }
         }
+        bids.sort((a, b) => b[0] - a[0]);
+        asks.sort((a, b) => a[0] - b[0]);
         const bestBid = bids.length > 0 ? bids[0][0] : null;
         const bestAsk = asks.length > 0 ? asks[0][0] : null;
         const bidDepth = bids.reduce((sum, level) => sum + level[1], 0);
